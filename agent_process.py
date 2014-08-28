@@ -52,20 +52,25 @@ class aservice(win32serviceutil.ServiceFramework):
         t_min_old = datetime.datetime.now().minute
         computer = os.environ['COMPUTERNAME']
         SHA = '0'
-        dow_SHA = '05ab4ec3db03f6f20910806a2d46dda094601c65f03169c32be41e7ca59c072d'
-        dow_SHA_success = True
+        dow_SHA = '0'
 
         reachable = False
 
-        old_path = "C:/agent/AgentScript.py"
-        exec_path = "C:/agent/AgentScript.py"
-        current_path = "C:/agent/AgentScript.py"
+        base_path = "C:/Agent/"
+
+        urls_path = "C:/Agent/urls.dat"
+        online_path = "C:/Agent/online.dat"
+
+        old_path = "C:/Agent/code/AgentCode.py"
+        exec_path = "C:/Agent/code/AgentCode.py"
+        current_path = "C:/Agent/code/AgentCode.py"
         new_path = ''
+
+        online_url = 'http://172.16.3.150:8000'
 
         postAddr = 'http://172.16.3.62:8000/monitor/receive/'+computer
         getAddr = 'http://mikkel.pythonanywhere.com/static/AgentScript.py'
-
-        script_path = "C:/agent/AgentScript.py"
+        shaAddr = 'http://mikkel.pythonanywhere.com/static/sha.txt'
 
         error = 0
 
@@ -88,26 +93,70 @@ class aservice(win32serviceutil.ServiceFramework):
             # Check to see if self.hWaitStop happened
             if rc == win32event.WAIT_OBJECT_0:
             # Stop signal encountered
-                servicemanager.LogInfoMsg("SomeShortNameVersion - STOPPED!")  #For Event Log
+                servicemanager.LogInfoMsg("Windar_Agent - STOPPED!")  #For Event Log
                 break
             else:
                 #[actual service code between rests]
+
                 print "alive"
                 t_min_new = datetime.datetime.now().minute
-                status = {'pc': computer, 'error': error}
-                try:
-                    requests.post("http://172.16.3.62:8000/monitor/receive/", params=status)
-                except:
-                    #ROUTINE TO FIND RIGHT SERVER=============================================<+
-                    reachable = False
-                    print "unreachable"
-                    print "save to statistics about connection"
-                    pass
+                status = {'pc': computer[7:], 'error': error}
+
+                if not reachable:
+                    try:
+                        requests.get(online_url+'/monitor/online/', timeout=3)
+                    except:
+                        print "get back reaching is not reachable/tries from file"
+                        with open(urls_path) as f:
+                            for line in f:
+                                if not reachable:
+                                    try:
+                                        print line[:-1]+'/monitor/online/'
+                                        requests.get(line[:-1]+'/monitor/online/', timeout=3)
+                                    except:
+                                        print line[:-1]+" NOT REACHABLE"
+                                        reachable = False
+                                    else:
+                                        print line[:-1]+" REACHABLE"
+                                        online_url = line[:-1]
+                                        try:
+                                            os.remove(online_path)
+                                        except:
+                                            pass
+                                        finally:
+                                            with open (online_path, "w+") as online:
+                                                online.write(line)
+                                        reachable = True
+                    else:
+                        print "get_back reachable/try to post POST params"
+                        reachable = True
+                        try:
+                            requests.post(online_url+"/monitor/receive/status/"+computer, params=status)
+                        except:
+                            reachable = False
+                            print "unreachable"
+                            print "save to statistics about connection"
+                            pass
+                        else:
+                            reachable = True
+                            print "reachable - save to statistics about connection"
+
                 else:
-                    reachable = True
-                    print "reachable - save to statistics about connection"
+                    try:
+                        #requests.post("http://172.16.3.62:8000/monitor/receive/", params=status)
+                        requests.post(online_url+"/monitor/receive/status/"+computer, params=status)
+                    except:
+                        reachable = False
+                        print "unreachable again"
+                        print "save to statistics about connection"
+                        pass
+                    else:
+                        reachable = True
+                        print "reachable - save to statistics about connection"
+
                 if (t_min_new != t_min_old) and (reachable):
                     t_min_old = t_min_new
+
                     try:
                         run_status = p.poll()
                     except:
@@ -118,11 +167,14 @@ class aservice(win32serviceutil.ServiceFramework):
                         if downgrade_err == True:
                             print "Downgrade_err TRUE"
                             run_status = 0
+
                     if run_status == None:
                         #subprocess is still running
                         print "Subprocess still running"
+
                         if run_min > run_min_span:
                             print "Kill process"
+
                             try:
                                 p.kill()
                             except:
@@ -130,9 +182,11 @@ class aservice(win32serviceutil.ServiceFramework):
                                 print "No Process to kill"
                             finally:
                                 run_min = 0
+
                             if run_exec > run_exec_span:
                                 run_exec = 0
                                 run_min_span = 1
+
                                 if new_code:
                                     print "Roll back to current_path"
                                     # Roll back to current path
@@ -147,19 +201,24 @@ class aservice(win32serviceutil.ServiceFramework):
                                     print "downgrade_err = True"
                                     #old code doesnt work
                                     downgrade_err = True
+
                             else:
                                 print "Extending running time"
                                 run_exec += 1
                                 run_min_span += 1
+
                         else:
                             run_min += 1
+
                     else:
                         #subprocess finished
                         print "Subprocess finished"
                         run_min = 0
+
                         if run_status == 0:
                             #code finished successfully
                             print "Code finished successfully or waiting to new code"
+
                             if new_code:
                                 #rewrite path to current
                                 print "New code so rewrite to current path"
@@ -170,26 +229,41 @@ class aservice(win32serviceutil.ServiceFramework):
                                 exec_path = current_path
                             else:
                                 #current working code / check for updates
-                                print "Current working code so try:"
+                                print "Current working code so try to dow SHA if new is available:"
                                 #Download:
-                                print "Download dow_SHA"    	 
-                                print "If download SHA successful !!! set dow_SHA_success flag !!!"
-                                print "SHA %s" % SHA
-                                if (dow_SHA != SHA) and (dow_SHA_success):
+                                try:
+                                    r = requests.get(shaAddr, auth=HTTPBasicAuth("majkl","majkl"), timeout=5)  #REMOVE THIS LINE
+                                    #r = requests.get(online_url+"/monitor/sha/"+computer[7:]", auth=HTTPBasicAuth("majkl","majkl")) NOTE!!! UPDATE with this
+                                except:
+                                    pass
+                                else:
+                                    if r.status_code == 200:
+                                        dow_SHA = r.content
+                                        print "SHA fetched: "+dow_SHA
+
+                                if (dow_SHA != SHA):
                                     print "Download SHA Successful and SHAs different"
                                     tryouts = 0
                                     cal_SHA = ''
-                                    new_path = "C:/agent/AgentScript"+time.strftime('-%Y-%m-%d-%H-%M')+".py"
+
                                     while (dow_SHA != cal_SHA) and (tryouts < 5):
                                         print "Try to download new code"
-                                        r = requests.get(getAddr, auth=HTTPBasicAuth("majkl","majkl"))
-                                        with open(new_path, "wb") as code:
-                                            code.write(r.content)
-                                        if r.status_code == 200:
-                                            print "calculation SHA"
-                                            cal_SHA = hashfile(open(new_path, 'rb'), hashlib.sha256())
-                                            print "Calculate SHA of new downloaded file: %s" % cal_SHA
+                                        try:
+                                            r = requests.get(getAddr, auth=HTTPBasicAuth("majkl","majkl"), timeout=5)  #REMOVE THIS LINE
+                                            #r = requests.get(online_url+"/static/"+computer[7:]+"AgentCode.py", auth=HTTPBasicAuth("majkl","majkl")) NOTE!!! UPDATE with this
+                                        except:
+                                            pass
+                                        else:
+                                            if r.status_code == 200:
+                                                new_path = "C:/Agent/code/AgentCode"+time.strftime('-%Y-%m-%d-%H-%M')+".py"
+                                                with open(new_path, "wb") as code:
+                                                    code.write(r.content)
+                                                print "calculation SHA"
+                                                cal_SHA = hashfile(open(new_path, 'rb'), hashlib.sha256())
+                                                print "Calculate SHA of new downloaded file: %s" % cal_SHA
+
                                         tryouts += 1
+
                                     if tryouts < 5:
                                         print "SHA MATCH!!!"
                                         SHA = cal_SHA
@@ -199,7 +273,9 @@ class aservice(win32serviceutil.ServiceFramework):
                                         run_exec = 0
                                         run_min_span = 1
                                     else:
-                                        print "Download & SHA Unsuccessful"
+                                        print "Download & SHA calculation Unsuccessful"
+                                        SHA = dow_SHA
+
                                 #Download END
                                 else:
                                     print "Keep current code / no new code available"
@@ -208,6 +284,7 @@ class aservice(win32serviceutil.ServiceFramework):
                             run_exec = 0
                             run_min_span = 1
                             #BLOCK OF CODE FROM PREVIOUS PART
+
                             if new_code:
                                 print "Roll back to current_path"
                                 # Roll back to current path
@@ -225,7 +302,7 @@ class aservice(win32serviceutil.ServiceFramework):
 
                     if (downgrade_err == False) and (run_min == 0):
                         print "Starting subprocess"
-                        p = subprocess.Popen(["C:/Users/Michal/.virtualenvs/agent/Scripts/Python.exe", exec_path],stdout=subprocess.PIPE,)
+                        p = subprocess.Popen(["C:/Agent/Scripts/Python.exe", exec_path],stdout=subprocess.PIPE,)
                         run_exec += 1
                         run_min += 1
                 #[actual service code between rests]
