@@ -48,6 +48,8 @@ class aservice(win32serviceutil.ServiceFramework):
         #self.timeout = 120000     #120 seconds / 2 minutes
         self.timeout = 5000     
         # This is how long the service will wait to run / refresh itself (see script below)
+        minute_counter = 0
+        update_time = 1     # NOTE Change for Release version
 
         t_min_old = datetime.datetime.now().minute
         computer = os.environ['COMPUTERNAME']
@@ -55,8 +57,6 @@ class aservice(win32serviceutil.ServiceFramework):
         dow_SHA = '0'
 
         reachable = False
-
-        base_path = "C:/Agent/"
 
         urls_path = "C:/Agent/urls.dat"
         online_path = "C:/Agent/online.dat"
@@ -66,11 +66,11 @@ class aservice(win32serviceutil.ServiceFramework):
         current_path = "C:/Agent/code/AgentCode.py"
         new_path = ''
 
-        online_url = 'http://172.16.3.150:8000'
-
-        postAddr = 'http://172.16.3.62:8000/monitor/receive/'+computer
         getAddr = 'http://mikkel.pythonanywhere.com/static/AgentScript.py'
         shaAddr = 'http://mikkel.pythonanywhere.com/static/sha.txt'
+
+        code_error = 0
+        code_err_size = 0
 
         error = 0
 
@@ -83,7 +83,12 @@ class aservice(win32serviceutil.ServiceFramework):
         new_code = False
         current_code = False
 
-
+        if os.path.exists(online_path):
+            with open(online_path) as o:
+                for line in o:
+                    online_url = line[:-1]
+        else:
+            online_url = ''
 
         #fil = open("C:/Users/Michal/Desktop/agent.txt",'a')
 
@@ -100,7 +105,11 @@ class aservice(win32serviceutil.ServiceFramework):
 
                 print "alive"
                 t_min_new = datetime.datetime.now().minute
-                status = {'pc': computer[7:], 'error': error}
+                if (t_min_new != t_min_old):
+                    t_min_old = t_min_new
+                    minute_counter += 1
+
+                status = {'pc': computer[7:], 'upd_time': update_time, 'error': error, 'code_err': code_error}
 
                 if not reachable:
                     try:
@@ -131,31 +140,44 @@ class aservice(win32serviceutil.ServiceFramework):
                         print "get_back reachable/try to post POST params"
                         reachable = True
                         try:
-                            requests.post(online_url+"/monitor/receive/status/"+computer, params=status)
+                            r = requests.post(online_url+"/monitor/receive/status/"+computer, params=status)
                         except:
                             reachable = False
                             print "unreachable"
                             print "save to statistics about connection"
                             pass
                         else:
+                            #print r.content
                             reachable = True
                             print "reachable - save to statistics about connection"
 
                 else:
                     try:
                         #requests.post("http://172.16.3.62:8000/monitor/receive/", params=status)
-                        requests.post(online_url+"/monitor/receive/status/"+computer, params=status)
+                        r = requests.post(online_url+"/monitor/receive/status/"+computer, params=status)
                     except:
                         reachable = False
                         print "unreachable again"
                         print "save to statistics about connection"
                         pass
                     else:
+                        #print r.content
                         reachable = True
                         print "reachable - save to statistics about connection"
 
-                if (t_min_new != t_min_old) and (reachable):
-                    t_min_old = t_min_new
+                if (minute_counter > (update_time-1)) and (reachable):
+                    minute_counter = 0
+
+                    try:
+                        e = os.path.getsize("C:/Agent/error.log")
+                    except:
+                        pass
+                    else:
+                        if e > err_size:
+                            code_error = 1
+                            err_size = e
+                        else:
+                            code_error = 0
 
                     try:
                         run_status = p.poll()
@@ -192,15 +214,19 @@ class aservice(win32serviceutil.ServiceFramework):
                                     # Roll back to current path
                                     new_code = False
                                     exec_path = current_path
+                                    os.remove(new_path)
+                                    error = 1
                                 elif current_code:
-                                    print "Roll back to old_path"
+                                    print "Roll back to old_path/FIRST UPDATE OR UNUSUAL BEHAVIOUR"
                                     #roll back to old code
                                     current_code = False
                                     exec_path = old_path
+                                    error = 2
                                 else:
                                     print "downgrade_err = True"
                                     #old code doesnt work
                                     downgrade_err = True
+                                    error = 3
 
                             else:
                                 print "Extending running time"
@@ -217,16 +243,19 @@ class aservice(win32serviceutil.ServiceFramework):
 
                         if run_status == 0:
                             #code finished successfully
-                            print "Code finished successfully or waiting to new code"
+                            print "Code finished successfully or waiting to new code after after downgrade error"
 
                             if new_code:
                                 #rewrite path to current
                                 print "New code so rewrite to current path"
+                                if current_path != old_path:
+                                    os.remove(current_path)
                                 current_path = new_path
                                 current_code = True
                                 new_path = None
                                 new_code = False
                                 exec_path = current_path
+                                error = 0
                             else:
                                 #current working code / check for updates
                                 print "Current working code so try to dow SHA if new is available:"
@@ -235,6 +264,7 @@ class aservice(win32serviceutil.ServiceFramework):
                                     r = requests.get(shaAddr, auth=HTTPBasicAuth("majkl","majkl"), timeout=5)  #REMOVE THIS LINE
                                     #r = requests.get(online_url+"/monitor/sha/"+computer[7:]", auth=HTTPBasicAuth("majkl","majkl")) NOTE!!! UPDATE with this
                                 except:
+                                    error = 11
                                     pass
                                 else:
                                     if r.status_code == 200:
@@ -252,6 +282,7 @@ class aservice(win32serviceutil.ServiceFramework):
                                             r = requests.get(getAddr, auth=HTTPBasicAuth("majkl","majkl"), timeout=5)  #REMOVE THIS LINE
                                             #r = requests.get(online_url+"/static/"+computer[7:]+"AgentCode.py", auth=HTTPBasicAuth("majkl","majkl")) NOTE!!! UPDATE with this
                                         except:
+                                            error = 12
                                             pass
                                         else:
                                             if r.status_code == 200:
@@ -272,9 +303,12 @@ class aservice(win32serviceutil.ServiceFramework):
                                         downgrade_err = False
                                         run_exec = 0
                                         run_min_span = 1
+                                        error = 20
                                     else:
                                         print "Download & SHA calculation Unsuccessful"
+                                        os.remove(new_path)
                                         SHA = dow_SHA
+                                        error = 13
 
                                 #Download END
                                 else:
@@ -288,17 +322,21 @@ class aservice(win32serviceutil.ServiceFramework):
                             if new_code:
                                 print "Roll back to current_path"
                                 # Roll back to current path
+                                os.remove(new_path)
                                 new_code = False
                                 exec_path = current_path
+                                error = 4
                             elif current_code:
-                                print "Roll back to old_path"
+                                print "Roll back to old_path/FIRST UPDATE OR UNUSUAL BEHAVIOUR"
                                 #roll back to old code
                                 current_code = False
                                 exec_path = old_path
+                                error = 5
                             else:
                                 print "downgrade_err = True"
                                 #old code doesnt work
                                 downgrade_err = True
+                                error = 6
 
                     if (downgrade_err == False) and (run_min == 0):
                         print "Starting subprocess"
