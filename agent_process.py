@@ -160,7 +160,7 @@ class aservice(win32serviceutil.ServiceFramework):
                     else:
                         print "     last online address reachable/try to post POST params"
                         try:
-                            r = requests.post(online_url+"/monitor/receive/status/"+computer, params=status)
+                            r = requests.post(online_url+"/monitor/"+computer+"/status/", params=status)
                         except:
                             reachable = False
                             print "     unreachable"
@@ -178,8 +178,7 @@ class aservice(win32serviceutil.ServiceFramework):
 
                 else:
                     try:
-                        #requests.post("http://172.16.3.62:8000/monitor/receive/", params=status)
-                        r = requests.post(online_url+"/monitor/receive/status/"+computer, params=status)
+                        r = requests.post(online_url+"/monitor/"+computer+"/status/", params=status)
                     except:
                         reachable = False
                         print "unreachable again"
@@ -305,8 +304,7 @@ class aservice(win32serviceutil.ServiceFramework):
                                 print "Current working code so try to dow SHA if new is available:"
                 #==========================================================================Download:
                                 try:
-                                    r = requests.get(shaAddr, auth=HTTPBasicAuth("majkl","majkl"), timeout=5)  #REMOVE THIS LINE
-                                    #r = requests.get(online_url+"/monitor/sha/"+computer[7:]", auth=HTTPBasicAuth("majkl","majkl")) NOTE!!! UPDATE with this
+                                    r = requests.get(online_url+"/monitor/"+computer[7:]+"/sha/", auth=HTTPBasicAuth("majkl","majkl"), timeout=5)
                                 except:
                                     error = 11
                                     pass
@@ -323,8 +321,7 @@ class aservice(win32serviceutil.ServiceFramework):
                                     while (dow_SHA != cal_SHA) and (tryouts < 5):
                                         print "Try to download new code"
                                         try:
-                                            r = requests.get(getAddr, auth=HTTPBasicAuth("majkl","majkl"), timeout=5)  #REMOVE THIS LINE
-                                            #r = requests.get(online_url+"/static/"+computer[7:]+"AgentCode.py", auth=HTTPBasicAuth("majkl","majkl")) NOTE!!! UPDATE with this
+                                            r = requests.get(online_url+"/static/"+computer[7:]+"/AgentCode.py", auth=HTTPBasicAuth("majkl","majkl"), timeout=5)
                                         except:
                                             error = 12
                                             pass
