@@ -46,7 +46,7 @@ class aservice(win32serviceutil.ServiceFramework):
         #self.timeout = 640000    #640 seconds / 10 minutes (value is in milliseconds)
         self.timeout = 20000        # This is how long the service will wait to run / refresh itself (see script below)
         minute_counter = 0
-        update_time = 5     #Set time to refresh code run / NOTE Change for Release version
+        update_time = 2     #Set time to refresh code run / NOTE Change for Release version
         data = {}
 
         t_min_old = datetime.datetime.now().minute
@@ -73,9 +73,8 @@ class aservice(win32serviceutil.ServiceFramework):
 
         error = 0
 
-        code_running = False
         code_stable = False
-        deployer_run = True    #to trigger running code deployer part every minute
+        deployer_run = False    #to trigger running code deployer part every minute
         downgrade_err = False
         run_status = 0
         run_min_span_default = 1    #Set how long is deadline for first run of code, be aware that is rising afterwards with next run attempts
@@ -125,12 +124,12 @@ class aservice(win32serviceutil.ServiceFramework):
                 if (t_min_new != t_min_old):
                     t_min_old = t_min_new
                     minute_counter += 1
-                    if code_running:
+                    if not code_stable:
                         deployer_run = True
 
                 print "     alive "+str(t_min_new)+":"+str(datetime.datetime.now().second)
 
-                status = {'pc': computer[7:], 'update_time': update_time, 'run_min_span': run_min_span_default, 'err': error, 'code_err': code_error}
+                status = {'pc': computer[7:], 'upd_time': update_time, 'error': error, 'code_err': code_error}
 
                 if not reachable:
                     try:
@@ -159,6 +158,11 @@ class aservice(win32serviceutil.ServiceFramework):
                                         reachable = True
                     else:
                         print "     last online address reachable/try to post POST params"
+                        reachable = True
+                        if r.status_code == 200:
+                            online_url = r.content
+                            print "online url fetched: "+dow_SHA
+
                         try:
                             r = requests.post(online_url+"/monitor/receive/status/"+computer, params=status)
                         except:
@@ -167,12 +171,6 @@ class aservice(win32serviceutil.ServiceFramework):
                             pass
                         else:
                             #print r.content
-                            if r.status_code == 200:
-                                content = r.content
-                                print content
-                            else:
-                                print "STATUS CODE NOT 200"
-
                             reachable = True
                             print "     reachable"
 
@@ -186,20 +184,13 @@ class aservice(win32serviceutil.ServiceFramework):
                         pass
                     else:
                         #print r.content
-                        if r.status_code == 200:
-                            content = r.content
-                            print content
-                        else:
-                            print "STATUS CODE NOT 200"
-
                         reachable = True
                         print "     reachable"
 
 # =======================================================================================CODE RUN====================================
                 if ((minute_counter == update_time) or (deployer_run)):
                     deployer_run = False
-                    if (minute_counter == update_time):
-                        minute_counter = 0
+                    minute_counter = 0
 
                     try:
                         e = os.path.getsize("C:/Agent/error.log")
@@ -226,15 +217,12 @@ class aservice(win32serviceutil.ServiceFramework):
     #================================================================ STILL RUNNING
                     if run_status == None:
                         #subprocess is still running
-                        code_running = True
                         print "Subprocess still running"
 
                         if run_min == run_min_span:
-                            print "KILL PROCESS <========"
+                            print "Kill process"
                             try:
                                 p.kill()
-                                code_running = False
-                                minute_counter = 0
                             except:
                                 pass
                                 print "No Process to kill"
@@ -242,7 +230,7 @@ class aservice(win32serviceutil.ServiceFramework):
                                 run_min = 0
 
                             if run_exec == run_exec_span:
-                                code_stable = False
+                                code_stable = True
                                 run_exec = 0
                                 run_min_span = run_min_span_default
 
@@ -268,7 +256,11 @@ class aservice(win32serviceutil.ServiceFramework):
                             else:
                                 print "Extending running time"
                                 run_min_span += 1
-                                code_stable = False
+                                code_stable = True
+                                print "run_exec: "+str(run_exec)
+                                print "run_exec_span: "+str(run_exec_span)
+                                print "run_min: "+str(run_min)
+                                print "run_min_span: "+str(run_min_span)
 
                         else:
                             code_stable = False
@@ -278,10 +270,9 @@ class aservice(win32serviceutil.ServiceFramework):
     #================================================================ FINISHED
                     else:
                         #subprocess finished
-                        code_running = False
                         print "Subprocess finished"
                         run_min = 0
-                        run_exec = 0
+                        code_stable = True
 
                         if run_status == 0:
                             #code finished successfully
@@ -299,7 +290,6 @@ class aservice(win32serviceutil.ServiceFramework):
                                 new_code = False
                                 exec_path = current_path
                                 error = 0
-                                code_stable = True
                             else:
                                 #current working code / check for updates
                                 print "Current working code so try to dow SHA if new is available:"
@@ -348,17 +338,14 @@ class aservice(win32serviceutil.ServiceFramework):
                                         run_exec = 0
                                         run_min_span = run_min_span_default
                                         error = 20
-                                        code_stable = False
                                     else:
                                         print "Download & SHA calculation Unsuccessful"
                                         os.remove(new_path)
                                         SHA = dow_SHA
                                         error = 13
-                                        code_stable = True
 
                 #==============================================================================Download END
                                 else:
-                                    code_stable = True
                                     print "Keep current code / no new code available"
 
                         else:
@@ -366,7 +353,7 @@ class aservice(win32serviceutil.ServiceFramework):
                     #================================================================ FINISHED
                             run_exec = 0
                             run_min_span = run_min_span_default
-                            code_stable = False
+
                             if new_code:
                                 print "Roll back to current_path( "+current_path+") from: "+new_path
                                 # Roll back to current path
@@ -404,28 +391,11 @@ class aservice(win32serviceutil.ServiceFramework):
                     with open(data_path, "wb") as f:
                         pickle.dump(data, f)
             
-                    if (downgrade_err == False) and (run_min == 0) and (not code_stable):
+                    if (downgrade_err == False) and (run_min == 0):
                         print "Starting subprocess"
                         p = subprocess.Popen(["C:/Agent/Scripts/Python.exe", exec_path],stdout=subprocess.PIPE,)
-                        code_running = True
                         run_min += 1
                         run_exec += 1
-
-                    if (downgrade_err == False) and code_stable and (minute_counter == 0):
-                        print "Starting subprocess"
-                        p = subprocess.Popen(["C:/Agent/Scripts/Python.exe", exec_path],stdout=subprocess.PIPE,)
-                        code_running = True
-                        run_min += 1
-                        run_exec += 1
-                    
-                    print "run_exec: "+str(run_exec)
-                    print "run_exec_span: "+str(run_exec_span)
-                    print "run_min: "+str(run_min)
-                    print "run_min_span: "+str(run_min_span)
-                    print "code_running: "+str(code_running)
-                    print "deployer_run: "+str(deployer_run)
-                    print "minute_counter: "+str(minute_counter)
-                    print "code_stable: "+str(code_stable)
 
                 #[actual service code between rests]
 
